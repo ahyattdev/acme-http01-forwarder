@@ -3,16 +3,19 @@ package main
 import (
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
 )
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+
 	targetHost := os.Getenv("TARGET_HOST")
 	if targetHost == "" {
-		log.Fatal("TARGET_HOST environment variable is required")
+		slog.Error("TARGET_HOST environment variable is required")
+		os.Exit(1)
 	}
 
 	listenPort := os.Getenv("LISTEN_PORT")
@@ -36,8 +39,12 @@ func main() {
 	})
 
 	addr := ":" + listenPort
-	log.Printf("Listening on %s, forwarding ACME challenges to %s", addr, targetHost)
-	log.Fatal(http.ListenAndServe(addr, nil))
+	slog.Info("starting server", "addr", addr, "target_host", targetHost)
+	err := http.ListenAndServe(addr, nil)
+	if err != nil {
+		slog.Error("server failed", "error", err)
+		os.Exit(1)
+	}
 }
 
 func forwardACMEChallenge(w http.ResponseWriter, r *http.Request, targetHost string) {
@@ -47,9 +54,11 @@ func forwardACMEChallenge(w http.ResponseWriter, r *http.Request, targetHost str
 
 	targetURL := fmt.Sprintf("http://%s%s", targetHost, r.URL.Path)
 
+	slog.Info("forwarding ACME challenge", "host", r.Host, "path", r.URL.Path, "target", targetURL)
+
 	req, err := http.NewRequest(http.MethodGet, targetURL, nil)
 	if err != nil {
-		log.Printf("Error creating request: %v", err)
+		slog.Error("failed to create request", "error", err)
 		http.Error(w, "Failed to create request", http.StatusInternalServerError)
 		return
 	}
@@ -58,7 +67,7 @@ func forwardACMEChallenge(w http.ResponseWriter, r *http.Request, targetHost str
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.Printf("Error forwarding request to %s: %v", targetURL, err)
+		slog.Error("failed to forward request", "target", targetURL, "error", err)
 		http.Error(w, "Failed to forward request", http.StatusBadGateway)
 		return
 	}
